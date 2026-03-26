@@ -1,101 +1,174 @@
 # 🐳 docker-managment
 
-A lightweight collection of Bash scripts to simplify Docker container lifecycle management — from pre-deployment checks to health monitoring.
+Production-ready Docker Compose deployment ve yönetim scripti koleksiyonu. Preflight kontrollerinden servis sağlık izlemeye kadar tüm deployment sürecini otomatize eder.
 
 ---
 
-## 📁 Project Structure
+## 📁 Proje Yapısı
 
 ```
 docker-managment/
-├── preflight.sh      # Pre-deployment environment & dependency checks
-├── deploy.sh         # Build and deploy Docker containers
-├── manage.sh         # Start, stop, restart, and inspect containers
-└── healthcheck.sh    # Monitor container health status
+├── deploy.sh          # Tek komutla full production deployment
+├── healthcheck.sh     # Container ve HTTPS endpoint sağlık kontrolü
+├── manage.sh          # Servis yönetim merkezi (up/down/status/logs...)
+└── preflight.sh       # Deployment öncesi 8 adımlı doğrulama
 ```
+
+> Scriptler `infra/scripts/` dizininde konumlanacak şekilde tasarlanmıştır.
 
 ---
 
-## 🚀 Scripts Overview
-
-### `preflight.sh` — Pre-flight Checks
-Validates the environment before any deployment. Checks for required dependencies (e.g., Docker, Docker Compose), verifies config files, and ensures the system is ready to deploy.
-
-```bash
-bash preflight.sh
-```
-
----
-
-### `deploy.sh` — Deployment
-Handles building Docker images and spinning up containers. Runs `preflight.sh` implicitly to ensure everything is in order before proceeding.
-
-```bash
-bash deploy.sh
-```
-
----
-
-### `manage.sh` — Container Management
-A general-purpose management script for controlling running containers. Supports operations like start, stop, restart, and status inspection.
-
-```bash
-bash manage.sh [start|stop|restart|status]
-```
-
----
-
-### `healthcheck.sh` — Health Monitoring
-Checks the health status of running containers and reports any that are unhealthy or stopped unexpectedly.
-
-```bash
-bash healthcheck.sh
-```
-
----
-
-## ⚙️ Requirements
+## ⚙️ Gereksinimler
 
 - **Docker** `>= 20.x`
-- **Docker Compose** `>= 2.x`
+- **Docker Compose** `v2.x` (`docker compose` plugin)
 - **Bash** `>= 4.x`
+- `.env.prod` dosyası (bkz. `.env.prod.example`)
+- TLS sertifikaları: `infra/nginx/certs/fullchain.pem` ve `privkey.pem`
 
 ---
 
-## 📦 Getting Started
+## 🚀 Hızlı Başlangıç
 
 ```bash
-# Clone the repository
+# Repoyu klonla
 git clone https://github.com/ozancanb/docker-managment.git
 cd docker-managment
 
-# Make scripts executable
-chmod +x *.sh
+# Scriptleri çalıştırılabilir yap
+chmod +x infra/scripts/*.sh
 
-# Run pre-flight checks
-bash preflight.sh
+# Ortam dosyasını oluştur
+cp .env.prod.example .env.prod
 
-# Deploy your containers
-bash deploy.sh
+# Tek komutla deploy et
+./infra/scripts/deploy.sh
 ```
 
 ---
 
-## 🔄 Typical Workflow
+## 📜 Scriptler
 
+### `deploy.sh` — Production Deployment
+
+Preflight kontrollerini çalıştırır, servisleri `docker-compose.prod.yml` override'ı ile ayağa kaldırır, 10 saniye bekledikten sonra healthcheck yapar.
+
+```bash
+./infra/scripts/deploy.sh
 ```
-preflight.sh ──► deploy.sh ──► manage.sh ──► healthcheck.sh
-    ✅ checks       🚢 deploy     🎛️ control     💓 monitor
+
+**Akış:**
+```
+preflight.sh → docker compose up -d --build → sleep 10 → healthcheck.sh
 ```
 
 ---
 
-## 🤝 Contributing
+### `preflight.sh` — 8 Adımlı Ön Kontrol
 
-Pull requests are welcome! For major changes, please open an issue first to discuss what you'd like to change.
+Deployment öncesinde ortamın hazır olduğunu doğrular:
+
+| Adım | Kontrol |
+|------|---------|
+| 1/8 | `.env.prod` dosyasının varlığı |
+| 2/8 | TLS sertifikalarının varlığı (`fullchain.pem`, `privkey.pem`) |
+| 3/8 | Docker Compose kurulumu |
+| 4/8 | 80 ve 443 portlarının müsaitliği |
+| 5/8 | Disk alanı (`df -h`) |
+| 6/8 | Bellek durumu (`free -h`) |
+| 7/8 | `docker compose config` doğrulaması |
+| 8/8 | Nginx syntax kontrolü (compose network içinde) |
+
+```bash
+./infra/scripts/preflight.sh
+```
 
 ---
 
-## 📄 License
+### `manage.sh` — Servis Yönetimi
 
-This project is open source. See [LICENSE](LICENSE) for details.
+Tüm günlük operasyonlar için tek giriş noktası.
+
+```bash
+./infra/scripts/manage.sh <komut> [servis_adı]
+```
+
+| Komut | Açıklama |
+|-------|----------|
+| `up` | Servisleri başlat (`-d`) |
+| `down` | Servisleri durdur ve temizle |
+| `build` | Tüm imajları `--no-cache` ile yeniden derle |
+| `deploy` | Orphan'ları kaldır, sıfırdan ayağa kaldır |
+| `update <servis>` | Tek bir servisi yeniden deploy et |
+| `status` | Container durumu, CPU/RAM kullanımı ve endpoint sağlığı |
+| `service <servis>` | Servis detayı: durum + son 20 log + env değişkenleri |
+| `logs` | Tüm servislerin canlı log akışı |
+
+**Desteklenen servisler:** `nginx`, `web`, `api`, `workers`, `ollama`, `postgres`, `redis`, `clickhouse`
+
+#### Örnekler
+
+```bash
+# Sistemi başlat
+./infra/scripts/manage.sh up
+
+# Genel durum özeti (container, CPU/RAM, endpoint kontrolü)
+./infra/scripts/manage.sh status
+
+# Sadece API servisini yeniden deploy et
+./infra/scripts/manage.sh update api
+
+# API servisinin loglarına ve env'ine bak
+./infra/scripts/manage.sh service api
+
+# Canlı log izleme
+./infra/scripts/manage.sh logs
+```
+
+---
+
+### `healthcheck.sh` — Sağlık Kontrolü
+
+Container durumlarını listeler ve `https://localhost/health` endpoint'ini doğrular.
+
+```bash
+./infra/scripts/healthcheck.sh
+```
+
+> `curl -kfsS` ile self-signed sertifikalı ortamlarda da çalışır.
+
+---
+
+## 🔄 Deployment Akışı
+
+```
+.env.prod + TLS certs
+        │
+        ▼
+  preflight.sh  ──► 8 kontrol geçilmezse EXIT
+        │
+        ▼
+  docker compose up -d --build
+  (docker-compose.yml + docker-compose.prod.yml)
+        │
+        ▼
+     sleep 10
+        │
+        ▼
+  healthcheck.sh  ──► /health endpoint OK?
+        │
+        ▼
+   ✅ Deploy tamamlandı
+```
+
+---
+
+## 🤝 Katkıda Bulunma
+
+Pull request'ler memnuniyetle karşılanır. Büyük değişiklikler için önce bir issue açmanız önerilir.
+
+---
+
+## 📄 Lisans
+
+Bu proje açık kaynaklıdır. Detaylar için [LICENSE](LICENSE) dosyasına bakın.
